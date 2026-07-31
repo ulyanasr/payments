@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Платежи месяца</title>
+<meta name="description" content="Отмечай оплаченные платежи каждый месяц. Дедлайн — 15 число.">
+
+<!-- ====== "Паспорт" приложения для телефона ====== -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#FF6B6B">
+<link rel="apple-touch-icon" href="icon-192.png">
+<!-- mobile-web-app-capable — современный стандарт, apple-* оставлен
+     для старых версий iOS, которые новый тег ещё не понимают -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Платежи">
+
+<style>
+  /* ===================== ТОКЕНЫ ДИЗАЙНА =====================
+     Палитра:
+     --coral   #FF6B6B  — главный акцент, "срочность"
+     --teal    #4ECDC4  — успех / оплачено
+     --sun     #FFE66D  — предупреждение / скоро дедлайн
+     --plum    #2D2A4A  — текст
+     --cream   #FFF8F0  — фон
+     --green   #6BCB77  — всё оплачено
+  ============================================================ */
+  :root {
+    --coral: #FF6B6B;
+    --coral-dark: #E85555;
+    --teal: #4ECDC4;
+    --teal-dark: #3BA89F;
+    --sun: #FFE66D;
+    --plum: #2D2A4A;
+    --cream: #FFF8F0;
+    --green: #6BCB77;
+    --card: #FFFFFF;
+    --muted: #8A8496;
+    --shadow: 0 8px 24px rgba(45, 42, 74, 0.08);
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--cream);
+    color: var(--plum);
+    font-family: -apple-system, "Segoe UI", "Trebuchet MS", system-ui, sans-serif;
+    min-height: 100vh;
+    min-height: 100dvh; /* учитывает панели браузера на телефоне */
+  }
+
+  body {
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) 0;
+  }
+
+  .wrap {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 20px 18px 40px;
+  }
+
+  /* Единый стиль фокуса — чтобы приложением можно было
+     пользоваться с клавиатуры и с внешних устройств ввода */
+  :focus-visible {
+    outline: 3px solid var(--coral);
+    outline-offset: 3px;
+    border-radius: 12px;
+  }
+
+  /* ---------- Шапка с датой ---------- */
+  .header {
+    text-align: center;
+    margin-bottom: 18px;
+  }
+  .header .eyebrow {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--coral-dark);
+    opacity: 0.75;
+  }
+  .header h1 {
+    font-size: 34px;
+    font-weight: 800;
+    margin: 4px 0 0;
+    letter-spacing: -0.02em;
+  }
+  .header h1 .day {
+    background: linear-gradient(135deg, var(--coral), var(--teal));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* ---------- Яркий баннер-напоминание ---------- */
+  .banner {
+    border-radius: 20px;
+    padding: 16px 18px;
+    margin-bottom: 18px;
+    font-weight: 700;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: var(--shadow);
+    animation: pop 0.4s ease;
+  }
+  .banner .emoji { font-size: 26px; line-height: 1; }
+  .banner.urgent { background: var(--coral); color: #fff; }
+  .banner.soon   { background: var(--sun); color: var(--plum); }
+  .banner.ok     { background: var(--green); color: #fff; }
+  .banner.done   { background: linear-gradient(135deg, var(--teal), var(--green)); color: #fff; }
+
+  @keyframes pop {
+    from { transform: scale(0.94); opacity: 0; }
+    to   { transform: scale(1); opacity: 1; }
+  }
+
+  /* ---------- Прогресс ---------- */
+  .progress-card {
+    background: var(--card);
+    border-radius: 22px;
+    box-shadow: var(--shadow);
+    padding: 18px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .ring {
+    width: 64px;
+    height: 64px;
+    flex-shrink: 0;
+  }
+  .ring circle {
+    fill: none;
+    stroke-width: 8;
+  }
+  .ring .track { stroke: #F1EEE7; }
+  .ring .value {
+    stroke: var(--teal);
+    stroke-linecap: round;
+    transform: rotate(-90deg);
+    transform-origin: 50% 50%;
+    transition: stroke-dashoffset 0.5s ease, stroke 0.3s ease;
+  }
+  .progress-text .count {
+    font-size: 22px;
+    font-weight: 800;
+  }
+  .progress-text .label {
+    font-size: 13px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  /* ---------- Список платежей ---------- */
+  .list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
+
+  .item {
+    background: var(--card);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.2s ease;
+  }
+  .item:active { transform: scale(0.98); }
+  .item.checked {
+    background: linear-gradient(135deg, #EAFBF7, #F3FBF0);
+  }
+
+  .item .icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+    background: var(--icon-bg, #F1EEE7);
+  }
+
+  .item .name {
+    flex: 1;
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .item.checked .name {
+    color: var(--teal-dark);
+  }
+
+  .item .check {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 2.5px solid #E3DFD6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+  .item.checked .check {
+    background: var(--teal);
+    border-color: var(--teal);
+  }
+  .item .check svg {
+    width: 16px;
+    height: 16px;
+    opacity: 0;
+    transform: scale(0.5);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  .item.checked .check svg {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  /* ---------- История ---------- */
+  .history-toggle {
+    width: 100%;
+    background: none;
+    border: none;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--coral-dark);
+    padding: 10px 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .history {
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .history.open { display: flex; }
+
+  .history-month {
+    background: var(--card);
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+    padding: 12px 16px;
+  }
+  .history-month .h-title {
+    font-weight: 800;
+    font-size: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+  .history-month .h-title .badge {
+    font-size: 12px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: #EAFBF7;
+    color: var(--teal-dark);
+    white-space: nowrap;
+  }
+  .history-month .h-title .badge.partial {
+    background: #FFF3E0;
+    color: #D98A2B;
+  }
+  .history-items {
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .history-items span {
+    padding: 3px 9px;
+    border-radius: 12px;
+    background: #F5F2EB;
+  }
+  .history-items span.done {
+    background: #EAFBF7;
+    color: var(--teal-dark);
+  }
+
+  .history-empty {
+    text-align: center;
+    color: #B3ACC0;
+    font-size: 14px;
+    padding: 20px 0;
+  }
+
+  .download-btn {
+    width: 100%;
+    margin-top: 14px;
+    background: var(--plum);
+    color: #fff;
+    border: none;
+    border-radius: 16px;
+    padding: 14px;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .download-btn:active { opacity: 0.85; }
+
+  .footnote {
+    text-align: center;
+    font-size: 12px;
+    color: #B3ACC0;
+    margin-top: 22px;
+    line-height: 1.5;
+  }
+
+  /* Уважаем системную настройку "меньше движения" */
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <div class="header">
+    <div class="eyebrow">Дедлайн оплаты</div>
+    <h1><span class="day" id="deadlineDay">15</span> <span id="monthName">месяца</span></h1>
+  </div>
+
+  <div class="banner" id="banner" role="status" aria-live="polite">
+    <span class="emoji" id="bannerEmoji" aria-hidden="true">⏰</span>
+    <span id="bannerText">Загрузка…</span>
+  </div>
+
+  <div class="progress-card">
+    <svg class="ring" viewBox="0 0 64 64" aria-hidden="true">
+      <circle class="track" cx="32" cy="32" r="26"></circle>
+      <circle class="value" id="ringValue" cx="32" cy="32" r="26"></circle>
+    </svg>
+    <div class="progress-text">
+      <div class="count" id="progressCount">—</div>
+      <div class="label">платежей оплачено</div>
+    </div>
+  </div>
+
+  <div class="list" id="list"></div>
+
+  <button class="history-toggle" id="historyToggle" aria-expanded="false" aria-controls="history">
+    <span id="historyToggleText">Показать историю ▾</span>
+  </button>
+
+  <div class="history" id="history"></div>
+
+  <button class="download-btn" id="downloadBtn">⬇️ Скачать всю историю</button>
+
+  <div class="footnote">
+    Данные хранятся только на этом телефоне.<br>
+    Напоминание на 14-е число настраивается отдельно в Google-календаре.
+  </div>
+
+</div>
+
+<script>
+"use strict";
+
+/* =========================================================
+   ДАННЫЕ: фиксированный список платежей
+   ========================================================= */
+const PAYMENTS = [
+  { id: "mortgage",  name: "Ипотека",      icon: "🏠", color: "#FFE3E3" },
+  { id: "utilities", name: "КУ",           icon: "💡", color: "#FFF6D9" },
+  { id: "internet",  name: "Интернет",     icon: "📶", color: "#E3F6FF" },
+  { id: "credit",    name: "Кредитка",     icon: "💳", color: "#F1E3FF" },
+  { id: "yota",      name: "Йота",         icon: "📱", color: "#E3FFF0" },
+  { id: "smz_tax",   name: "Налог на СМЗ", icon: "🧾", color: "#FFE9DA" },
+];
+
+/* Число месяца, до которого нужно всё оплатить.
+   Одно место на всё приложение: и заголовок, и тексты баннера. */
+const DEADLINE_DAY = 15;
+
+const MONTH_NAMES = [
+  "январь","февраль","март","апрель","май","июнь",
+  "июль","август","сентябрь","октябрь","ноябрь","декабрь"
+];
+const MONTH_NAMES_GEN = [
+  "января","февраля","марта","апреля","мая","июня",
+  "июля","августа","сентября","октября","ноября","декабря"
+];
+
+const STORAGE_KEY = "payments_state_v1";
+const HISTORY_KEY = "payments_history_v1";
+
+/* Сколько месяцев храним в истории. Без ограничения список рос бы
+   вечно и однажды упёрся бы в лимит памяти браузера. */
+const HISTORY_LIMIT = 60;
+
+const TOTAL = PAYMENTS.length;
+
+/* =========================================================
+   ССЫЛКИ НА ЭЛЕМЕНТЫ СТРАНИЦЫ
+   Ищем их один раз при загрузке, а не при каждой перерисовке
+   ========================================================= */
+const el = {
+  list:            document.getElementById("list"),
+  banner:          document.getElementById("banner"),
+  bannerEmoji:     document.getElementById("bannerEmoji"),
+  bannerText:      document.getElementById("bannerText"),
+  progressCount:   document.getElementById("progressCount"),
+  ringValue:       document.getElementById("ringValue"),
+  monthName:       document.getElementById("monthName"),
+  deadlineDay:     document.getElementById("deadlineDay"),
+  history:         document.getElementById("history"),
+  historyToggle:   document.getElementById("historyToggle"),
+  historyToggleText: document.getElementById("historyToggleText"),
+  downloadBtn:     document.getElementById("downloadBtn"),
+};
+
+/* =========================================================
+   ХРАНЕНИЕ
+   Всё, что приходит из localStorage, считаем недоверенным:
+   данные могли испортиться или остаться от старой версии.
+   Поэтому проверяем форму и в случае чего возвращаем пустое
+   значение — приложение не должно "белым экраном" ломаться
+   навсегда из-за одной кривой записи.
+   ========================================================= */
+function readJSON(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key));
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeJSON(key, value) {
+  // В приватном режиме или при переполненной памяти запись бросает
+  // исключение — ловим его, чтобы приложение продолжало работать
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function isObject(v) {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function loadState() {
+  const raw = readJSON(STORAGE_KEY);
+  if (!isObject(raw) || typeof raw.month !== "string") return null;
+  return {
+    month: raw.month,
+    checked: isObject(raw.checked) ? raw.checked : {}
+  };
+}
+
+function saveState(state) {
+  return writeJSON(STORAGE_KEY, state);
+}
+
+function loadHistory() {
+  const raw = readJSON(HISTORY_KEY);
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(entry => isObject(entry) && typeof entry.month === "string")
+    .map(entry => {
+      const checked = isObject(entry.checked) ? entry.checked : {};
+      return {
+        month: entry.month,
+        checked,
+        total: Number.isFinite(entry.total) ? entry.total : TOTAL,
+        doneCount: Number.isFinite(entry.doneCount)
+          ? entry.doneCount
+          : PAYMENTS.filter(p => checked[p.id]).length
+      };
+    });
+}
+
+function saveHistory(history) {
+  return writeJSON(HISTORY_KEY, history);
+}
+
+function monthKeyOf(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function countDone(checked) {
+  return PAYMENTS.filter(p => checked[p.id]).length;
+}
+
+/* =========================================================
+   АРХИВАЦИЯ: если сохранённый месяц отличается от текущего —
+   старые данные уходят в историю, начинается пустой список
+   ========================================================= */
+function ensureCurrentMonth() {
+  const nowKey = monthKeyOf(new Date());
+  const state = loadState();
+
+  if (!state) {
+    const fresh = { month: nowKey, checked: {} };
+    saveState(fresh);
+    return fresh;
+  }
+
+  if (state.month === nowKey) return state;
+
+  // Архивируем прошлый месяц. Запись с тем же месяцем сначала убираем:
+  // если сохранение состояния не прошло (приватный режим, нет места),
+  // при следующем открытии месяц заархивировался бы повторно и история
+  // засорилась бы дублями.
+  const history = loadHistory().filter(entry => entry.month !== state.month);
+  history.unshift({
+    month: state.month,
+    checked: state.checked,
+    total: TOTAL,
+    doneCount: countDone(state.checked)
+  });
+  saveHistory(history.slice(0, HISTORY_LIMIT));
+
+  const fresh = { month: nowKey, checked: {} };
+  saveState(fresh);
+  return fresh;
+}
+
+let state = ensureCurrentMonth();
+
+/* =========================================================
+   СПИСОК ПЛАТЕЖЕЙ
+   Карточки создаём один раз, дальше только переключаем класс.
+   Так галочка успевает плавно анимироваться (при пересоздании
+   элемента анимация не проигрывается) и не теряется фокус.
+   ========================================================= */
+const itemEls = new Map();
+
+function buildList() {
+  const frag = document.createDocumentFragment();
+
+  PAYMENTS.forEach(p => {
+    const item = document.createElement("div");
+    item.className = "item";
+    // Роль checkbox + tabindex делают карточку доступной с клавиатуры
+    // и понятной для голосовых помощников (VoiceOver, TalkBack)
+    item.setAttribute("role", "checkbox");
+    item.setAttribute("tabindex", "0");
+
+    const icon = document.createElement("div");
+    icon.className = "icon";
+    icon.style.setProperty("--icon-bg", p.color);
+    icon.textContent = p.icon;
+    icon.setAttribute("aria-hidden", "true");
+
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = p.name;
+
+    const check = document.createElement("div");
+    check.className = "check";
+    check.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+      '<path d="M4 12l5 5L20 6" stroke="white" stroke-width="3.2" ' +
+      'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    item.append(icon, name, check);
+
+    item.addEventListener("click", () => toggle(p.id));
+    item.addEventListener("keydown", (event) => {
+      if (event.key === " " || event.key === "Enter") {
+        event.preventDefault(); // пробел иначе прокрутит страницу
+        toggle(p.id);
+      }
+    });
+
+    itemEls.set(p.id, item);
+    frag.appendChild(item);
+  });
+
+  el.list.appendChild(frag);
+}
+
+function syncList() {
+  PAYMENTS.forEach(p => {
+    const isChecked = !!state.checked[p.id];
+    const item = itemEls.get(p.id);
+    item.classList.toggle("checked", isChecked);
+    item.setAttribute("aria-checked", isChecked ? "true" : "false");
+  });
+}
+
+function toggle(id) {
+  state.checked[id] = !state.checked[id];
+  saveState(state);
+  render();
+}
+
+/* =========================================================
+   ПРОГРЕСС (кольцо + счётчик)
+   ========================================================= */
+const RING_RADIUS = 26;
+const RING_LENGTH = 2 * Math.PI * RING_RADIUS; // длина окружности
+el.ringValue.setAttribute("stroke-dasharray", RING_LENGTH.toFixed(2));
+el.ringValue.setAttribute("stroke-dashoffset", RING_LENGTH.toFixed(2));
+
+function renderProgress(done) {
+  el.progressCount.textContent = `${done} из ${TOTAL}`;
+  el.ringValue.style.strokeDashoffset = RING_LENGTH * (1 - done / TOTAL);
+  el.ringValue.style.stroke = done === TOTAL ? "var(--green)" : "var(--teal)";
+}
+
+/* =========================================================
+   ЗАГОЛОВОК С МЕСЯЦЕМ
+   ========================================================= */
+function renderHeader() {
+  el.deadlineDay.textContent = DEADLINE_DAY;
+  el.monthName.textContent = MONTH_NAMES_GEN[new Date().getMonth()];
+}
+
+/* =========================================================
+   ЯРКИЙ БАННЕР-НАПОМИНАНИЕ
+   меняется в зависимости от того, сколько дней осталось
+   до дедлайна и всё ли оплачено
+   ========================================================= */
+function renderBanner(done) {
+  const day = new Date().getDate();
+  const left = TOTAL - done;
+
+  let tone, emoji, text;
+
+  if (left === 0) {
+    tone = "done";
+    emoji = "🎉";
+    text = "Всё оплачено — красота, можно выдохнуть!";
+  } else if (day > DEADLINE_DAY) {
+    tone = "urgent";
+    emoji = "🚨";
+    text = `Дедлайн уже прошёл! Осталось оплатить: ${left}`;
+  } else if (day === DEADLINE_DAY) {
+    tone = "urgent";
+    emoji = "🚨";
+    text = `Сегодня последний день! Не оплачено: ${left}`;
+  } else if (day >= DEADLINE_DAY - 2) {
+    tone = "urgent";
+    emoji = "⏰";
+    text = `${plural(DEADLINE_DAY - day, "Остался", "Осталось", "Осталось")} ` +
+           `${DEADLINE_DAY - day} ${plural(DEADLINE_DAY - day, "день", "дня", "дней")}. ` +
+           `Не оплачено: ${left}`;
+  } else if (day >= DEADLINE_DAY - 5) {
+    tone = "soon";
+    emoji = "🔔";
+    text = `Скоро дедлайн (${DEADLINE_DAY}-го). Не оплачено: ${left}`;
+  } else {
+    tone = "ok";
+    emoji = "🙂";
+    text = `Есть время до ${DEADLINE_DAY}-го. Не оплачено: ${left}`;
+  }
+
+  el.banner.className = "banner " + tone;
+  el.bannerEmoji.textContent = emoji;
+  el.bannerText.textContent = text;
+}
+
+/* Русские окончания: 1 день, 2 дня, 5 дней */
+function plural(n, one, few, many) {
+  const mod100 = n % 100;
+  const mod10 = n % 10;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
+
+/* =========================================================
+   ОБЩАЯ ПЕРЕРИСОВКА
+   ========================================================= */
+function render() {
+  const done = countDone(state.checked);
+  syncList();
+  renderProgress(done);
+  renderBanner(done);
+}
+
+/* =========================================================
+   ИСТОРИЯ
+   ========================================================= */
+function monthLabel(monthKey) {
+  const [year, month] = String(monthKey).split("-").map(Number);
+  const name = MONTH_NAMES[month - 1];
+  if (!name || !Number.isFinite(year)) return String(monthKey);
+  return `${name[0].toUpperCase()}${name.slice(1)} ${year}`;
+}
+
+function renderHistory() {
+  const history = loadHistory();
+  el.history.textContent = "";
+
+  if (history.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "history-empty";
+    empty.textContent = "Пока пусто — история появится в конце месяца";
+    el.history.appendChild(empty);
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+
+  history.forEach(entry => {
+    const card = document.createElement("div");
+    card.className = "history-month";
+
+    const title = document.createElement("div");
+    title.className = "h-title";
+
+    const monthEl = document.createElement("span");
+    monthEl.textContent = monthLabel(entry.month);
+
+    const badge = document.createElement("span");
+    const isFull = entry.doneCount === entry.total;
+    badge.className = isFull ? "badge" : "badge partial";
+    badge.textContent = `${entry.doneCount} из ${entry.total}`;
+
+    title.append(monthEl, badge);
+
+    const items = document.createElement("div");
+    items.className = "history-items";
+    PAYMENTS.forEach(p => {
+      const tag = document.createElement("span");
+      if (entry.checked[p.id]) tag.className = "done";
+      tag.textContent = `${p.icon} ${p.name}`;
+      items.appendChild(tag);
+    });
+
+    card.append(title, items);
+    frag.appendChild(card);
+  });
+
+  el.history.appendChild(frag);
+}
+
+el.historyToggle.addEventListener("click", () => {
+  const open = el.history.classList.toggle("open");
+  el.historyToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  el.historyToggleText.textContent = open ? "Скрыть историю ▴" : "Показать историю ▾";
+  if (open) renderHistory();
+});
+
+/* =========================================================
+   СКАЧАТЬ ИСТОРИЮ ЦЕЛИКОМ (текстовый файл)
+   ========================================================= */
+el.downloadBtn.addEventListener("click", () => {
+  const history = loadHistory();
+  if (history.length === 0) {
+    alert("История пока пуста — появится в конце первого месяца использования.");
+    return;
+  }
+
+  const lines = ["ИСТОРИЯ ПЛАТЕЖЕЙ", "==================", ""];
+  history.forEach(entry => {
+    lines.push(`${monthLabel(entry.month)} — оплачено ${entry.doneCount} из ${entry.total}`);
+    PAYMENTS.forEach(p => {
+      lines.push(`  ${entry.checked[p.id] ? "✅" : "⬜"} ${p.name}`);
+    });
+    lines.push("");
+  });
+
+  // \r\n и BOM — чтобы файл корректно открывался и в Windows-блокноте
+  const blob = new Blob(["﻿" + lines.join("\r\n")], {
+    type: "text/plain;charset=utf-8"
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "payments-history.txt";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+});
+
+/* =========================================================
+   АКТУАЛЬНОСТЬ ДАТЫ
+   Приложение с телефона обычно не закрывают неделями: оно
+   просто висит в фоне. Без этой проверки после смены суток
+   (и тем более месяца) на экране остались бы вчерашние
+   тексты, а платежи прошлого месяца не ушли бы в историю.
+   ========================================================= */
+let shownDayKey = "";
+
+function refreshIfDateChanged() {
+  const now = new Date();
+  const dayKey = `${monthKeyOf(now)}-${now.getDate()}`;
+  if (dayKey === shownDayKey) return;
+  shownDayKey = dayKey;
+
+  state = ensureCurrentMonth();
+  renderHeader();
+  render();
+  if (el.history.classList.contains("open")) renderHistory();
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshIfDateChanged();
+});
+window.addEventListener("pageshow", refreshIfDateChanged);
+
+/* =========================================================
+   ЗАПУСК
+   ========================================================= */
+buildList();
+refreshIfDateChanged();
+
+/* =========================================================
+   Service worker — чтобы приложение работало без интернета
+   ========================================================= */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+</script>
+
+</body>
+</html>

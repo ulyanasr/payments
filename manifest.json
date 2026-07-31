@@ -1,0 +1,28 @@
+{
+  "id": "./",
+  "name": "Платежи месяца",
+  "short_name": "Платежи",
+  "description": "Отмечай оплаченные платежи каждый месяц, дедлайн — 15 число",
+  "lang": "ru",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#FFF8F0",
+  "theme_color": "#FF6B6B",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
