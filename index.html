@@ -576,33 +576,57 @@ function loadOrCreateState() {
 /* Закрыть текущий месяц вручную: сохранить его в историю
    и начать чистый список. Вызывается только по клику на кнопку —
    никогда не срабатывает само по дате. */
+/* Месяц, следующий за переданным: "2026-09" → "2026-10" */
+function nextMonthKey(monthKey) {
+  const [year, month] = String(monthKey).split("-").map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    return monthKeyOf(new Date());
+  }
+  // month здесь 1-based, поэтому new Date(year, month, 1) — уже следующий
+  return monthKeyOf(new Date(year, month, 1));
+}
+
 function closeMonth() {
-  const ok = confirm(
-    "Закрыть месяц? Текущие галочки уйдут в историю, список станет пустым."
-  );
-  if (!ok) return;
+  const done = countDone(state.checked);
 
+  const question = done === 0
+    ? "В списке ничего не отмечено. Всё равно закрыть период и записать его в историю пустым?"
+    : `Закрыть ${monthLabel(state.month)}? Отмеченные платежи (${done} из ${TOTAL}) ` +
+      `уйдут в историю, список станет пустым.`;
+  if (!confirm(question)) return;
+
+  // Каждое закрытие — отдельная запись, ничего не сливаем и не удаляем.
   const history = loadHistory();
-  const previous = history.find(entry => entry.month === state.month);
-
-  // Если этот месяц уже закрывали, старую запись не затираем, а сливаем
-  // с новой: оплачено — значит оплачено, даже если галочку ставили
-  // в прошлый заход. Иначе второе закрытие молча стирало бы данные.
-  const merged = {};
-  PAYMENTS.forEach(p => {
-    merged[p.id] = !!((previous && previous.checked[p.id]) || state.checked[p.id]);
-  });
-
-  const rest = history.filter(entry => entry.month !== state.month);
-  rest.unshift({
+  history.unshift({
     month: state.month,
-    checked: merged,
+    checked: state.checked,
     total: TOTAL,
-    doneCount: countDone(merged)
+    doneCount: done
   });
-  saveHistory(rest.slice(0, HISTORY_LIMIT));
 
-  state = { month: monthKeyOf(new Date()), checked: {} };
+  // Сначала убеждаемся, что история записалась, и только потом чистим
+  // галочки. Если памяти нет (переполнение, приватный режим), период
+  // пропал бы бесследно: в историю не попал, а из списка стёрт.
+  if (!saveHistory(history.slice(0, HISTORY_LIMIT))) {
+    alert(
+      "Не удалось сохранить историю — похоже, в памяти браузера нет места.\n" +
+      "Галочки оставлены как есть, чтобы ничего не потерялось. " +
+      "Попробуй сначала скачать историю кнопкой ниже."
+    );
+    return;
+  }
+
+  // Новый цикл — это СЛЕДУЮЩИЙ период, а не тот же самый.
+  // Раньше здесь стоял текущий месяц, то есть ровно тот, который только
+  // что ушёл в историю. Метка переставала определять период: следующее
+  // закрытие попадало в ту же ячейку, и записи сталкивались — сначала
+  // затирали друг друга, потом (после правки на слияние) склеивались,
+  // и вся история уезжала на месяц.
+  // Если пользователь закрыл период с опозданием и календарь уже ушёл
+  // дальше — берём текущий месяц.
+  const nowKey = monthKeyOf(new Date());
+  const next = nextMonthKey(state.month);
+  state = { month: next > nowKey ? next : nowKey, checked: {} };
   saveState(state);
 
   render();
@@ -763,7 +787,11 @@ function plural(n, one, few, many) {
    заголовок и баннер говорят про ноябрь. Эта плашка убирает расхождение:
    она появляется, только если месяц состояния не совпал с текущим. */
 function renderStaleNote() {
-  if (state.month === monthKeyOf(new Date())) {
+  // Сравниваем строки вида "2026-09" — они сравниваются как даты.
+  // Плашка нужна, только когда период ОТСТАЛ от календаря. Если он
+  // впереди (закрыли месяц досрочно, и новый цикл — уже следующий),
+  // ничего не напоминаем: всё идёт по плану.
+  if (state.month >= monthKeyOf(new Date())) {
     el.staleNote.hidden = true;
     el.staleNote.textContent = "";
     return;
