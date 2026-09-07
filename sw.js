@@ -4,10 +4,16 @@
 // старый кэш у всех пользователей.
 const CACHE_NAME = "payments-app-v3";
 
-const FILES_TO_CACHE = [
+// Без этих файлов приложения просто нет — их кэшируем строго
+const CORE_FILES = [
   "./",
   "./index.html",
-  "./manifest.json",
+  "./manifest.json"
+];
+
+// А это "приятные дополнения". Если одной иконки нет или она
+// переименована — приложение всё равно должно установиться
+const EXTRA_FILES = [
   "./icon-192.png",
   "./icon-512.png"
 ];
@@ -15,10 +21,19 @@ const FILES_TO_CACHE = [
 // Страница, которую отдаём, если интернета нет
 const OFFLINE_PAGE = "./index.html";
 
-// Установка: складываем все файлы приложения в офлайн-кэш
+// Установка: складываем файлы приложения в офлайн-кэш.
+// addAll — это "всё или ничего": если хоть один файл не скачался,
+// падает вся установка и офлайна не будет вообще. Поэтому
+// обязательные файлы грузим пачкой, а иконки — поштучно и молча.
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(FILES_TO_CACHE))
+    caches.open(CACHE_NAME).then((cache) =>
+      cache
+        .addAll(CORE_FILES)
+        .then(() =>
+          Promise.all(EXTRA_FILES.map((file) => cache.add(file).catch(() => {})))
+        )
+    )
   );
   self.skipWaiting();
 });
@@ -69,8 +84,17 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          event.waitUntil(cacheIfOk(OFFLINE_PAGE, response));
-          return response;
+          if (response.ok) {
+            event.waitUntil(cacheIfOk(OFFLINE_PAGE, response));
+            return response;
+          }
+
+          // Интернет есть, но сервер ответил ерундой: 404, 500 или
+          // страницей-заглушкой хостинга. Показывать это пользователю
+          // хуже, чем показать вчерашнюю рабочую копию приложения
+          return caches
+            .match(OFFLINE_PAGE, { cacheName: CACHE_NAME })
+            .then((cached) => cached || response);
         })
         .catch(() =>
           caches.match(OFFLINE_PAGE, { cacheName: CACHE_NAME }).then(

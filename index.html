@@ -9,6 +9,9 @@
 <!-- ====== "Паспорт" приложения для телефона ====== -->
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#FF6B6B">
+<!-- Палитра приложения светлая. Без этой строки браузер в тёмной теме
+     может попробовать "помочь" и перекрасить поля ввода и фон -->
+<meta name="color-scheme" content="light">
 <link rel="apple-touch-icon" href="icon-192.png">
 <!-- mobile-web-app-capable — современный стандарт, apple-* оставлен
      для старых версий iOS, которые новый тег ещё не понимают -->
@@ -120,6 +123,21 @@
     from { transform: scale(0.94); opacity: 0; }
     to   { transform: scale(1); opacity: 1; }
   }
+
+  /* ---------- Плашка "галочки не за этот месяц" ---------- */
+  .stale-note {
+    background: #FFF3E0;
+    color: #A9691E;
+    border: 1.5px dashed #E9B877;
+    border-radius: 16px;
+    padding: 11px 14px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.45;
+    text-align: center;
+  }
+  .stale-note[hidden] { display: none; }
 
   /* ---------- Прогресс ---------- */
   .progress-card {
@@ -323,6 +341,25 @@
   }
   .download-btn:active { opacity: 0.85; }
 
+  .close-month-btn {
+    width: 100%;
+    margin-top: 14px;
+    background: none;
+    color: var(--coral-dark);
+    border: 2px solid var(--coral);
+    border-radius: 16px;
+    padding: 13px;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .close-month-btn:active { opacity: 0.75; }
+
   .footnote {
     text-align: center;
     font-size: 12px;
@@ -355,6 +392,8 @@
     <span id="bannerText">Загрузка…</span>
   </div>
 
+  <div class="stale-note" id="staleNote" role="status" hidden></div>
+
   <div class="progress-card">
     <svg class="ring" viewBox="0 0 64 64" aria-hidden="true">
       <circle class="track" cx="32" cy="32" r="26"></circle>
@@ -373,6 +412,8 @@
   </button>
 
   <div class="history" id="history"></div>
+
+  <button class="close-month-btn" id="closeMonthBtn">🔒 Закрыть месяц и начать заново</button>
 
   <button class="download-btn" id="downloadBtn">⬇️ Скачать всю историю</button>
 
@@ -429,6 +470,7 @@ const el = {
   banner:          document.getElementById("banner"),
   bannerEmoji:     document.getElementById("bannerEmoji"),
   bannerText:      document.getElementById("bannerText"),
+  staleNote:       document.getElementById("staleNote"),
   progressCount:   document.getElementById("progressCount"),
   ringValue:       document.getElementById("ringValue"),
   monthName:       document.getElementById("monthName"),
@@ -437,6 +479,7 @@ const el = {
   historyToggle:   document.getElementById("historyToggle"),
   historyToggleText: document.getElementById("historyToggleText"),
   downloadBtn:     document.getElementById("downloadBtn"),
+  closeMonthBtn:   document.getElementById("closeMonthBtn"),
 };
 
 /* =========================================================
@@ -514,40 +557,59 @@ function countDone(checked) {
 }
 
 /* =========================================================
-   АРХИВАЦИЯ: если сохранённый месяц отличается от текущего —
-   старые данные уходят в историю, начинается пустой список
+   ЗАГРУЗКА СОСТОЯНИЯ
+   Раньше здесь была автоматическая архивация при смене месяца.
+   Теперь месяц закрывается только вручную кнопкой "Закрыть месяц"
+   (см. closeMonth ниже) — галочки копятся, пока пользователь сам
+   не решит начать новый цикл. При первом запуске просто создаём
+   пустое состояние.
    ========================================================= */
-function ensureCurrentMonth() {
-  const nowKey = monthKeyOf(new Date());
-  const state = loadState();
+function loadOrCreateState() {
+  const existing = loadState();
+  if (existing) return existing;
 
-  if (!state) {
-    const fresh = { month: nowKey, checked: {} };
-    saveState(fresh);
-    return fresh;
-  }
-
-  if (state.month === nowKey) return state;
-
-  // Архивируем прошлый месяц. Запись с тем же месяцем сначала убираем:
-  // если сохранение состояния не прошло (приватный режим, нет места),
-  // при следующем открытии месяц заархивировался бы повторно и история
-  // засорилась бы дублями.
-  const history = loadHistory().filter(entry => entry.month !== state.month);
-  history.unshift({
-    month: state.month,
-    checked: state.checked,
-    total: TOTAL,
-    doneCount: countDone(state.checked)
-  });
-  saveHistory(history.slice(0, HISTORY_LIMIT));
-
-  const fresh = { month: nowKey, checked: {} };
+  const fresh = { month: monthKeyOf(new Date()), checked: {} };
   saveState(fresh);
   return fresh;
 }
 
-let state = ensureCurrentMonth();
+/* Закрыть текущий месяц вручную: сохранить его в историю
+   и начать чистый список. Вызывается только по клику на кнопку —
+   никогда не срабатывает само по дате. */
+function closeMonth() {
+  const ok = confirm(
+    "Закрыть месяц? Текущие галочки уйдут в историю, список станет пустым."
+  );
+  if (!ok) return;
+
+  const history = loadHistory();
+  const previous = history.find(entry => entry.month === state.month);
+
+  // Если этот месяц уже закрывали, старую запись не затираем, а сливаем
+  // с новой: оплачено — значит оплачено, даже если галочку ставили
+  // в прошлый заход. Иначе второе закрытие молча стирало бы данные.
+  const merged = {};
+  PAYMENTS.forEach(p => {
+    merged[p.id] = !!((previous && previous.checked[p.id]) || state.checked[p.id]);
+  });
+
+  const rest = history.filter(entry => entry.month !== state.month);
+  rest.unshift({
+    month: state.month,
+    checked: merged,
+    total: TOTAL,
+    doneCount: countDone(merged)
+  });
+  saveHistory(rest.slice(0, HISTORY_LIMIT));
+
+  state = { month: monthKeyOf(new Date()), checked: {} };
+  saveState(state);
+
+  render();
+  if (el.history.classList.contains("open")) renderHistory();
+}
+
+let state = loadOrCreateState();
 
 /* =========================================================
    СПИСОК ПЛАТЕЖЕЙ
@@ -696,11 +758,29 @@ function plural(n, one, few, many) {
 /* =========================================================
    ОБЩАЯ ПЕРЕРИСОВКА
    ========================================================= */
+/* Месяц теперь закрывается только вручную. Значит, легко забыть нажать
+   кнопку — и тогда в списке висят галочки, скажем, за сентябрь, а
+   заголовок и баннер говорят про ноябрь. Эта плашка убирает расхождение:
+   она появляется, только если месяц состояния не совпал с текущим. */
+function renderStaleNote() {
+  if (state.month === monthKeyOf(new Date())) {
+    el.staleNote.hidden = true;
+    el.staleNote.textContent = "";
+    return;
+  }
+
+  el.staleNote.hidden = false;
+  el.staleNote.textContent =
+    `Галочки ниже — за ${monthLabel(state.month)}. ` +
+    `Новый месяц уже идёт: закрой старый кнопкой внизу, чтобы начать чистый список.`;
+}
+
 function render() {
   const done = countDone(state.checked);
   syncList();
   renderProgress(done);
   renderBanner(done);
+  renderStaleNote();
 }
 
 /* =========================================================
@@ -720,7 +800,7 @@ function renderHistory() {
   if (history.length === 0) {
     const empty = document.createElement("div");
     empty.className = "history-empty";
-    empty.textContent = "Пока пусто — история появится в конце месяца";
+    empty.textContent = "Пока пусто — появится после того, как закроешь месяц кнопкой";
     el.history.appendChild(empty);
     return;
   }
@@ -760,6 +840,8 @@ function renderHistory() {
   el.history.appendChild(frag);
 }
 
+el.closeMonthBtn.addEventListener("click", closeMonth);
+
 el.historyToggle.addEventListener("click", () => {
   const open = el.history.classList.toggle("open");
   el.historyToggle.setAttribute("aria-expanded", open ? "true" : "false");
@@ -773,7 +855,7 @@ el.historyToggle.addEventListener("click", () => {
 el.downloadBtn.addEventListener("click", () => {
   const history = loadHistory();
   if (history.length === 0) {
-    alert("История пока пуста — появится в конце первого месяца использования.");
+    alert("История пока пуста — появится после того, как ты закроешь первый месяц кнопкой «Закрыть месяц».");
     return;
   }
 
@@ -804,8 +886,9 @@ el.downloadBtn.addEventListener("click", () => {
    АКТУАЛЬНОСТЬ ДАТЫ
    Приложение с телефона обычно не закрывают неделями: оно
    просто висит в фоне. Без этой проверки после смены суток
-   (и тем более месяца) на экране остались бы вчерашние
-   тексты, а платежи прошлого месяца не ушли бы в историю.
+   (и тем более месяца) на экране остались бы вчерашние тексты:
+   баннер про "осталось 3 дня", когда дедлайн уже прошёл.
+   Галочки при этом не трогаем — месяц закрывается только кнопкой.
    ========================================================= */
 let shownDayKey = "";
 
@@ -815,7 +898,8 @@ function refreshIfDateChanged() {
   if (dayKey === shownDayKey) return;
   shownDayKey = dayKey;
 
-  state = ensureCurrentMonth();
+  // Состояние (галочки) больше не трогаем — только обновляем
+  // текст заголовка и баннера, чтобы они отражали сегодняшнюю дату
   renderHeader();
   render();
   if (el.history.classList.contains("open")) renderHistory();
@@ -825,6 +909,13 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refreshIfDateChanged();
 });
 window.addEventListener("pageshow", refreshIfDateChanged);
+
+// Два обработчика выше срабатывают, когда приложение сворачивают
+// и открывают заново. Но если оно так и лежит открытым в полночь
+// 14-го на 15-е — ничего бы не сработало. Раз в минуту дешевле,
+// чем вручную ловить полночь: внутри стоит проверка на "день не
+// изменился — выходим", так что перерисовки почти не происходит.
+setInterval(refreshIfDateChanged, 60 * 1000);
 
 /* =========================================================
    ЗАПУСК
