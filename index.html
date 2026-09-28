@@ -720,9 +720,37 @@ function renderProgress(done) {
 /* =========================================================
    ЗАГОЛОВОК С МЕСЯЦЕМ
    ========================================================= */
+/* Дата дедлайна для периода: "2026-10" → 15 октября 2026.
+   Именно период, а не календарь, задаёт дедлайн: после нажатия
+   "Закрыть месяц" цикл переходит на следующий месяц, и шапка
+   с баннером должны сразу показывать уже его 15-е число. */
+function deadlineOf(monthKey) {
+  const [year, month] = String(monthKey).split("-").map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), DEADLINE_DAY);
+  }
+  return new Date(year, month - 1, DEADLINE_DAY);
+}
+
+/* Месяц дедлайна в родительном падеже: "октября" */
+function deadlineMonthName(monthKey) {
+  return MONTH_NAMES_GEN[deadlineOf(monthKey).getMonth()];
+}
+
+/* Сколько суток до даты: сегодня → 0, завтра → 1, вчера → −1.
+   Обе даты приводим к полуночи, иначе переход на летнее время
+   мог бы дать лишние полдня и сбить счёт. */
+function daysUntil(date) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  return Math.round((target - today) / 86400000);
+}
+
 function renderHeader() {
   el.deadlineDay.textContent = DEADLINE_DAY;
-  el.monthName.textContent = MONTH_NAMES_GEN[new Date().getMonth()];
+  el.monthName.textContent = deadlineMonthName(state.month);
 }
 
 /* =========================================================
@@ -731,8 +759,13 @@ function renderHeader() {
    до дедлайна и всё ли оплачено
    ========================================================= */
 function renderBanner(done) {
-  const day = new Date().getDate();
   const left = TOTAL - done;
+  // Считаем дни до дедлайна ТЕКУЩЕГО ПЕРИОДА. Раньше здесь было
+  // просто число сегодняшнего дня: пока период всегда совпадал с
+  // календарём, это работало, но после ручного перехода на следующий
+  // месяц отсчёт врал бы на месяц.
+  const daysLeft = daysUntil(deadlineOf(state.month));
+  const deadlineText = `${DEADLINE_DAY} ${deadlineMonthName(state.month)}`;
 
   let tone, emoji, text;
 
@@ -740,28 +773,28 @@ function renderBanner(done) {
     tone = "done";
     emoji = "🎉";
     text = "Всё оплачено — красота, можно выдохнуть!";
-  } else if (day > DEADLINE_DAY) {
+  } else if (daysLeft < 0) {
     tone = "urgent";
     emoji = "🚨";
-    text = `Дедлайн уже прошёл! Осталось оплатить: ${left}`;
-  } else if (day === DEADLINE_DAY) {
+    text = `Дедлайн ${deadlineText} уже прошёл! Осталось оплатить: ${left}`;
+  } else if (daysLeft === 0) {
     tone = "urgent";
     emoji = "🚨";
     text = `Сегодня последний день! Не оплачено: ${left}`;
-  } else if (day >= DEADLINE_DAY - 2) {
+  } else if (daysLeft <= 2) {
     tone = "urgent";
     emoji = "⏰";
-    text = `${plural(DEADLINE_DAY - day, "Остался", "Осталось", "Осталось")} ` +
-           `${DEADLINE_DAY - day} ${plural(DEADLINE_DAY - day, "день", "дня", "дней")}. ` +
+    text = `${plural(daysLeft, "Остался", "Осталось", "Осталось")} ` +
+           `${daysLeft} ${plural(daysLeft, "день", "дня", "дней")}. ` +
            `Не оплачено: ${left}`;
-  } else if (day >= DEADLINE_DAY - 5) {
+  } else if (daysLeft <= 5) {
     tone = "soon";
     emoji = "🔔";
-    text = `Скоро дедлайн (${DEADLINE_DAY}-го). Не оплачено: ${left}`;
+    text = `Скоро дедлайн — ${deadlineText}. Не оплачено: ${left}`;
   } else {
     tone = "ok";
     emoji = "🙂";
-    text = `Есть время до ${DEADLINE_DAY}-го. Не оплачено: ${left}`;
+    text = `Есть время до ${deadlineText}. Не оплачено: ${left}`;
   }
 
   el.banner.className = "banner " + tone;
@@ -807,6 +840,9 @@ function render() {
   const done = countDone(state.checked);
   syncList();
   renderProgress(done);
+  // Шапка зависит от периода, а период меняется при закрытии месяца,
+  // поэтому перерисовываем её здесь, а не только при смене даты
+  renderHeader();
   renderBanner(done);
   renderStaleNote();
 }
@@ -926,9 +962,8 @@ function refreshIfDateChanged() {
   if (dayKey === shownDayKey) return;
   shownDayKey = dayKey;
 
-  // Состояние (галочки) больше не трогаем — только обновляем
-  // текст заголовка и баннера, чтобы они отражали сегодняшнюю дату
-  renderHeader();
+  // Состояние (галочки) больше не трогаем — только пересчитываем
+  // тексты: сколько дней осталось до дедлайна периода
   render();
   if (el.history.classList.contains("open")) renderHistory();
 }
